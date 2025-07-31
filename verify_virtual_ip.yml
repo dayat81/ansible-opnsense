@@ -1,0 +1,130 @@
+---
+- name: Verify Virtual IP Configuration on OPNSense
+  hosts: localhost
+  gather_facts: false
+  vars:
+    opnsense_firewall: "192.168.18.47"
+    virtual_ip: "192.168.18.49"
+    
+  tasks:
+    - name: Test connectivity to OPNSense firewall
+      uri:
+        url: "https://{{ opnsense_firewall }}"
+        method: GET
+        validate_certs: false
+        status_code: [200, 302, 401, 403]
+        timeout: 10
+      register: firewall_connectivity
+      
+    - name: Display firewall connectivity status
+      debug:
+        msg: "OPNSense firewall at {{ opnsense_firewall }} is {{ 'reachable' if firewall_connectivity.status in [200, 302, 401, 403] else 'unreachable' }}"
+
+    - name: Test ping to virtual IP from localhost
+      command: ping -c 4 {{ virtual_ip }}
+      register: ping_result
+      ignore_errors: true
+      changed_when: false
+      
+    - name: Display ping test results
+      debug:
+        msg: |
+          Ping test to {{ virtual_ip }}:
+          Status: {{ 'SUCCESS' if ping_result.rc == 0 else 'FAILED' }}
+          {% if ping_result.rc == 0 %}
+          Response: Virtual IP is reachable and responding to ping
+          {% else %}
+          Error: {{ ping_result.stderr | default('Virtual IP not responding') }}
+          {% endif %}
+
+    - name: Check ARP table for virtual IP
+      command: arp -n {{ virtual_ip }}
+      register: arp_check
+      ignore_errors: true
+      changed_when: false
+      
+    - name: Display ARP table information
+      debug:
+        msg: |
+          ARP table check for {{ virtual_ip }}:
+          {% if arp_check.rc == 0 %}
+          Status: FOUND
+          ARP Entry: {{ arp_check.stdout }}
+          {% else %}
+          Status: NOT FOUND - Virtual IP may not be configured or not in ARP cache
+          {% endif %}
+
+    - name: Test TCP connectivity to virtual IP (port 443)
+      wait_for:
+        host: "{{ virtual_ip }}"
+        port: 443
+        timeout: 5
+      register: tcp_443_test
+      ignore_errors: true
+      
+    - name: Display TCP port 443 test results
+      debug:
+        msg: |
+          TCP port 443 test to {{ virtual_ip }}:
+          Status: {{ 'OPEN' if tcp_443_test is not failed else 'CLOSED/FILTERED' }}
+
+    - name: Test TCP connectivity to virtual IP (port 80)
+      wait_for:
+        host: "{{ virtual_ip }}"
+        port: 80
+        timeout: 5
+      register: tcp_80_test
+      ignore_errors: true
+      
+    - name: Display TCP port 80 test results
+      debug:
+        msg: |
+          TCP port 80 test to {{ virtual_ip }}:
+          Status: {{ 'OPEN' if tcp_80_test is not failed else 'CLOSED/FILTERED' }}
+
+    - name: Perform traceroute to virtual IP
+      command: traceroute -n -w 2 -m 5 {{ virtual_ip }}
+      register: traceroute_result
+      ignore_errors: true
+      changed_when: false
+      
+    - name: Display traceroute results
+      debug:
+        msg: |
+          Traceroute to {{ virtual_ip }}:
+          {{ traceroute_result.stdout if traceroute_result.rc == 0 else 'Traceroute failed: ' + (traceroute_result.stderr | default('Unknown error')) }}
+
+    - name: Check routing table for virtual IP network
+      command: ip route get {{ virtual_ip }}
+      register: route_check
+      ignore_errors: true
+      changed_when: false
+      
+    - name: Display routing information
+      debug:
+        msg: |
+          Route to {{ virtual_ip }}:
+          {{ route_check.stdout if route_check.rc == 0 else 'No route found' }}
+
+    - name: Summary of virtual IP verification
+      debug:
+        msg: |
+          =================================================
+          VIRTUAL IP VERIFICATION SUMMARY
+          =================================================
+          Virtual IP: {{ virtual_ip }}
+          OPNSense Firewall: {{ opnsense_firewall }}
+          
+          Connectivity Tests:
+          - Firewall Web Interface: {{ 'OK' if firewall_connectivity.status in [200, 302, 401, 403] else 'FAILED' }}
+          - Ping to VIP: {{ 'OK' if ping_result.rc == 0 else 'FAILED' }}
+          - ARP Table Entry: {{ 'FOUND' if arp_check.rc == 0 else 'NOT FOUND' }}
+          - TCP Port 443: {{ 'OPEN' if tcp_443_test is not failed else 'CLOSED' }}
+          - TCP Port 80: {{ 'OPEN' if tcp_80_test is not failed else 'CLOSED' }}
+          
+          {% if ping_result.rc == 0 %}
+          ✅ RESULT: Virtual IP appears to be configured and accessible
+          {% else %}
+          ❌ RESULT: Virtual IP is not responding - check OPNSense configuration
+          {% endif %}
+          =================================================

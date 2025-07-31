@@ -1,0 +1,61 @@
+---
+- name: Configure Virtual IP and Firewall Rule on OPNSense
+  hosts: localhost
+  gather_facts: false
+  vars:
+    opnsense_firewall: "192.168.18.47"
+    opnsense_user: "root"
+    opnsense_password: "opnsense"
+    virtual_ip: "192.168.18.49/24"
+    
+  tasks:
+    - name: Configure Virtual IP 192.168.18.49/24
+      ansibleguy.opnsense.interface_vip:
+        firewall: "{{ opnsense_firewall }}"
+        api_credential_file: "{{ api_key_file | default(omit) }}"
+        api_key: "{{ opnsense_user if api_key_file is not defined else omit }}"
+        api_secret: "{{ opnsense_password if api_key_file is not defined else omit }}"
+        ssl_verify: false
+        
+        address: "{{ virtual_ip }}"
+        interface: "wan"
+        mode: "ipalias"
+        description: "Virtual IP for additional services"
+        bind: true
+        expand: true
+        
+        state: present
+        reload: true
+      register: vip_result
+      
+    - name: Display Virtual IP configuration result
+      debug:
+        var: vip_result
+        
+    - name: Add firewall rule to allow traffic to Virtual IP
+      ansibleguy.opnsense.rule:
+        firewall: "{{ opnsense_firewall }}"
+        api_credential_file: "{{ api_key_file | default(omit) }}"
+        api_key: "{{ opnsense_user if api_key_file is not defined else omit }}"
+        api_secret: "{{ opnsense_password if api_key_file is not defined else omit }}"
+        ssl_verify: false
+        
+        sequence: 100
+        action: "pass"
+        interface: ["wan"]
+        direction: "in"
+        ip_protocol: "inet"
+        protocol: "any"
+        source_net: "any"
+        destination_net: "192.168.18.49"
+        description: "Allow traffic to Virtual IP 192.168.18.49"
+        log: true
+        
+        match_fields: ["sequence", "interface", "destination_net"]
+        state: present
+        reload: true
+      register: rule_result
+      
+    - name: Display firewall rule result
+      debug:
+        var: rule_result

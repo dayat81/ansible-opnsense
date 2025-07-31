@@ -1,0 +1,98 @@
+---
+# First, you need to generate API credentials in OPNSense:
+# 1. Go to https://192.168.18.47 and login with root/opnsense
+# 2. Navigate to System → Access → Users
+# 3. Edit the root user or create a new user
+# 4. In the "API keys" section, click "+" to generate new API credentials
+# 5. Save the API Key and API Secret (the secret won't be shown again)
+# 6. Create a file with these credentials and update the path below
+
+- name: Configure Virtual IP on OPNSense WAN Interface
+  hosts: localhost
+  gather_facts: false
+  vars:
+    opnsense_firewall: "192.168.18.47"
+    # Update this path to your API credentials file
+    api_credentials_file: "./opnsense_api_credentials.txt"
+    virtual_ip: "192.168.18.49/24"
+    
+  tasks:
+    - name: Display API setup instructions
+      debug:
+        msg: |
+          BEFORE RUNNING THIS PLAYBOOK:
+          1. Go to https://{{ opnsense_firewall }} 
+          2. Login with root/opnsense
+          3. Navigate to System → Access → Users
+          4. Edit the root user (or create new user)
+          5. In "API keys" section, click "+" to generate API credentials
+          6. Create file {{ api_credentials_file }} with format:
+             key=YOUR_API_KEY
+             secret=YOUR_API_SECRET
+             url=https://{{ opnsense_firewall }}
+             ssl_verify=False
+
+    - name: Check if API credentials file exists
+      stat:
+        path: "{{ api_credentials_file }}"
+      register: api_file
+      
+    - name: Fail if API credentials file doesn't exist
+      fail:
+        msg: "API credentials file {{ api_credentials_file }} not found. Please create it first (see instructions above)."
+      when: not api_file.stat.exists
+
+    - name: Configure Virtual IP 192.168.18.49/24 on WAN
+      ansibleguy.opnsense.interface_vip:
+        firewall: "{{ opnsense_firewall }}"
+        api_credential_file: "{{ api_credentials_file }}"
+        ssl_verify: false
+        
+        address: "{{ virtual_ip }}"
+        interface: "wan"
+        mode: "ipalias"
+        description: "Virtual IP for WAN interface services"
+        bind: true
+        expand: true
+        
+        state: present
+        reload: true
+      register: vip_result
+      
+    - name: Display Virtual IP configuration result
+      debug:
+        var: vip_result
+        
+    - name: Add firewall rule to allow traffic to Virtual IP
+      ansibleguy.opnsense.rule:
+        firewall: "{{ opnsense_firewall }}"
+        api_credential_file: "{{ api_credentials_file }}"
+        ssl_verify: false
+        
+        sequence: 100
+        action: "pass"
+        interface: ["wan"]
+        direction: "in"
+        ip_protocol: "inet"
+        protocol: "any"
+        source_net: "any"
+        destination_net: "192.168.18.49"
+        description: "Allow inbound traffic to Virtual IP 192.168.18.49"
+        log: true
+        
+        match_fields: ["sequence", "interface", "destination_net"]
+        state: present
+        reload: true
+      register: rule_result
+      
+    - name: Display firewall rule result
+      debug:
+        var: rule_result
+
+    - name: Configuration complete
+      debug:
+        msg: |
+          Virtual IP configuration completed!
+          - Virtual IP 192.168.18.49/24 configured on WAN interface
+          - Firewall rule added to allow inbound traffic
+          - You should now be able to ping 192.168.18.49 from external networks
